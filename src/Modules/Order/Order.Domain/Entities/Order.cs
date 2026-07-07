@@ -1,22 +1,22 @@
 using Order.CustomExceptions;
 using Order.Enums;
+using BuildingBlocks.Domain.Entities;
+using Order.DomainEvents;
 
 namespace Order.Entities;
 
-public class Order
+public class Order : AggregateRoot
 {
     public int Number { get; private set; }
-    public Guid Id { get; private set; }
     public Guid CustomerId { get; private set; }
     private readonly List<OrderItem> _items = new();
     public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();
     public OrderStatus Status { get; private set; }
     public PaymentStatus PaymentStatus { get; private set; }
-    public decimal Discount { get; private set; }
+    public byte DiscountPercentage { get; private set; }
+    public decimal Discount => Math.Round(Subtotal * (DiscountPercentage / 100m), 2, MidpointRounding.AwayFromZero);
     public decimal Subtotal => _items.Sum(i => i.TotalPrice);
     public decimal Total => Subtotal - Discount;
-    public DateTime CreatedAt { get; private set; }
-    public DateTime? UpdatedAt { get; private set; }
     public DateTime? PaidAt { get; private set; }
     public DateTime? ShippedAt { get; private set; }
     public DateTime? DeliveredAt { get; private set; }
@@ -29,25 +29,22 @@ public class Order
 
     private Order() {}
     
-    public static Order Create(Guid customerId, decimal discount, List<OrderItem> items)
+    public static Order Create(Guid customerId, byte discountPercentage, List<OrderItem> items)
     {
         if(customerId == Guid.Empty)
             throw new DomainException("Cannot be empty",nameof(customerId));
         
-        if(discount < 0)
-            throw new DomainException("Discount cannot be negative", nameof(discount));
+        if(discountPercentage > 100)
+            throw new DomainException("Discount Percentage cannot exceed 100", nameof(discountPercentage));
         
         if(items is null || items.Count < 1)
             throw new DomainException("Items cannot be empty", nameof(items));
         
         var order = new Order
         {
-            Id = Guid.CreateVersion7(),
             CustomerId = customerId,
             Status = OrderStatus.Pending,
-            Discount = discount,
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = null,
+            DiscountPercentage = discountPercentage,
             PaidAt = null,
             ShippedAt = null,
             DeliveredAt = null,
@@ -57,6 +54,7 @@ public class Order
         foreach (var item in items)
             order.AddItem(item);
         
+        order.RaiseDomainEvent(new OrderCreatedDomainEvent(order.Id, order.CustomerId, order.Total));
         return order;
     }
 
@@ -96,10 +94,6 @@ public class Order
     }
    
     #region Setters datetimes
-    public void SetUpdatedAt()
-    {
-        UpdatedAt = DateTime.UtcNow;
-    }
     
     public void SetCancelledAt()
     {
@@ -121,15 +115,15 @@ public class Order
         DeliveredAt = DateTime.UtcNow;
     }
     
-    public void SetDiscount(decimal discount)
+    public void SetDiscount(byte discountPercentage)
     {
         if(Status != OrderStatus.Pending)
             throw new DomainException($"Cannot set discount to order with status {Status}.");
                 
-        if(discount < 0)
-            throw new DomainException("Discount cannot be negative",nameof(discount));
+        if(discountPercentage > 0)
+            throw new DomainException("Discount Percentage cannot exceed 100.",nameof(discountPercentage));
         
-        Discount = discount;
+        DiscountPercentage = discountPercentage;
     }
     #endregion
     
@@ -138,12 +132,15 @@ public class Order
     {
         TransitionTo(OrderStatus.Shipped);
         SetShippedAt();
+        RaiseDomainEvent(new OrderShippedDomainEvent(Id, ShippedAt!.Value));
     }
     
     public void SetCancelled()
     {
         TransitionTo(OrderStatus.Cancelled);
         SetCancelledAt();
+        RaiseDomainEvent(new OrderCancelledDomainEvent(Id, CancelledAt!.Value));
+
     }
     
     public void SetProcessing()
@@ -155,6 +152,7 @@ public class Order
     {
         TransitionTo(OrderStatus.Delivered);
         SetDeliveredAt();
+        RaiseDomainEvent(new OrderDeliveredDomainEvent(Id, DeliveredAt!.Value));
     }
     
     public void SetReturned()

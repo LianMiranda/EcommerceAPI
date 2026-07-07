@@ -1,15 +1,14 @@
+using BuildingBlocks.Domain.Entities;
 using Order.CustomExceptions;
 
 namespace Order.Entities;
 
-public class Refund
+public class Refund : BaseEntity
 {
-    public Guid Id { get; private set; }
     public Guid OrderId { get; private set; }
     public Guid? OrderItemId { get; private set; }  // null = reembolso não vinculado a item específico
     public decimal Amount { get; private set; }
     public string Reason { get; private set; } //Razão
-    public DateTime CreatedAt { get; private set; }
 
     private Refund() {}
 
@@ -26,12 +25,10 @@ public class Refund
         
         return new Refund
         {
-            Id = Guid.CreateVersion7(),
             OrderId = orderId,
             OrderItemId = orderItemId,
             Amount = amount,
             Reason = reason,
-            CreatedAt = DateTime.UtcNow
         };
     }
 }
