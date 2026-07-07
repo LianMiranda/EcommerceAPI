@@ -21,6 +21,11 @@ public class Order
     public DateTime? ShippedAt { get; private set; }
     public DateTime? DeliveredAt { get; private set; }
     public DateTime? CancelledAt { get; private set; }
+    private readonly List<Refund> _refunds = new();
+    public IReadOnlyCollection<Refund> Refunds => _refunds.AsReadOnly();
+    public decimal TotalRefunded => _refunds.Sum(r => r.Amount);
+    public bool IsFullyRefunded => TotalRefunded >= Total;
+    public bool IsPartiallyRefunded => TotalRefunded > 0 && !IsFullyRefunded;
 
     private Order() {}
     
@@ -70,6 +75,24 @@ public class Order
 
         
         _items.Remove(orderItem);
+    }
+    
+    public void RegisterRefund(decimal amount, string reason, Guid? orderItemId = null)
+    {
+        if (PaymentStatus != PaymentStatus.Approved)
+            throw new DomainException($"Cannot refund payment with status {PaymentStatus}.");
+
+        if (TotalRefunded + amount > Total)
+            throw new DomainException("Refund amount exceeds total paid.", nameof(amount));
+
+        if (orderItemId is not null && !_items.Any(i => i.Id == orderItemId))
+            throw new DomainException("Order item does not belong to this order.", nameof(orderItemId));
+
+        var refund = Refund.Create(Id, orderItemId, amount, reason);
+        _refunds.Add(refund);
+    
+        if (IsFullyRefunded)
+            SetPaymentRefunded();
     }
    
     #region Setters datetimes
@@ -162,7 +185,7 @@ public class Order
         TransitionPaymentTo(PaymentStatus.Rejected);
     }
 
-    public void SetPaymentRefunded()
+    private void SetPaymentRefunded()
     {
         TransitionPaymentTo(PaymentStatus.Refunded);
     }
